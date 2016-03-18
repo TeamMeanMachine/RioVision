@@ -1,4 +1,5 @@
 import java.awt.image.BufferedImage;
+import java.awt.image.DataBufferByte;
 import java.util.ArrayList;
 
 import org.opencv.core.Core;
@@ -10,7 +11,10 @@ import org.opencv.core.Scalar;
 import org.opencv.core.Size;
 import org.opencv.imgproc.Imgproc;
 import org.opencv.videoio.VideoCapture;
-import org.opencv.videoio.Videoio;
+
+import edu.wpi.first.wpilibj.networktables.NetworkTable;
+import edu.wpi.first.wpilibj.tables.ITable;
+import edu.wpi.first.wpilibj.tables.ITableListener;
 
 public class ImageLoader {
 	
@@ -19,15 +23,45 @@ public class ImageLoader {
 	public static void main(String[] args) {
 		System.loadLibrary(Core.NATIVE_LIBRARY_NAME);
 		
-		MyFrame frame = new MyFrame();
-		frame.setVisible(true);
+		//Create Axis Camera instance
+		AxisCamera aCam = new AxisCamera("192.168.1.105");
 		
-		MyFrame rawFrame = new MyFrame();
-		rawFrame.setVisible(true);
+		//Just for testing, use proper SmartDashboard on robot
+		NetworkTable.setServerMode();
+		NetworkTable.initialize();
+		NetworkTable smartDashboard = NetworkTable.getTable("SmartDashboard");
+		smartDashboard.putNumber("Brightness", aCam.getBrightness());
+		smartDashboard.putNumber("Contrast", aCam.getContrast());
+		smartDashboard.putNumber("Exposure", aCam.getExposure());
+		
+		//Camera properties change listeners
+		smartDashboard.addTableListener("Brightness", new ITableListener() {
+			
+			@Override
+			public void valueChanged(ITable source, String key, Object value, boolean isNew) {
+				aCam.setBrightness(((Double) value).intValue()); 
+			}
+		}, true);
+		
+		smartDashboard.addTableListener("Contrast", new ITableListener() {
+			
+			@Override
+			public void valueChanged(ITable source, String key, Object value, boolean isNew) {
+				aCam.setContrast(((Double) value).intValue()); 
+			}
+		}, true);
 
-		//Read image into mat
-//		VideoCapture camera = new VideoCapture("http://192.168.10.22/axis-cgi/mjpg/video.cgi?dummy=param.mjpg");
-		VideoCapture camera = new VideoCapture(0);
+		smartDashboard.addTableListener("Exposure", new ITableListener() {
+	
+			@Override
+			public void valueChanged(ITable source, String key, Object value, boolean isNew) {
+				aCam.setExposure(((Double) value).intValue()); 
+			}
+		}, true);
+
+		//Open Axis camera
+		VideoCapture camera = new VideoCapture(aCam.getVideoURL());
+		
 		if(camera.isOpened()) {
 			System.out.println("Camera connected");
 		}
@@ -36,28 +70,17 @@ public class ImageLoader {
 			return;
 		}
 		
-		camera.set(Videoio.CAP_PROP_EXPOSURE, 5);
+		//Start MJPG server
+		MjpgServer server = new MjpgServer();
 		
-		long framerate = 1000 / 7;
-	    // time the frame began. Edit the second value (60) to change the prefered FPS (i.e. change to 50 for 50 fps)
-	    long frameStart;
-	    // number of frames counted this second
-	    long frameCount = 0;
-	    // time elapsed during one frame
-	    long elapsedTime;
-	    // accumulates elapsed time over multiple frames
-	    long totalElapsedTime = 0;
-	    // the actual calculated framerate reported
-		
-		while(true) {
-			frameStart = System.currentTimeMillis();
-			
+		//Processing loop
+		while(true) {			
+			//Grab frame from camera
 			Mat rawImage = new Mat();
 			if(!camera.read(rawImage)) {
 				System.out.println("Failed to read image");
-				break;
+				continue;
 			}
-//			Mat rawImage = imread("/Users/griffen/Documents/Development/LoadImage/RealFullField/492.jpg");
 			
 			// Filter image
 			Mat filteredImage = new Mat();
@@ -122,39 +145,28 @@ public class ImageLoader {
 			Imgproc.drawContours(rawImage, hullsMOP, -1, new Scalar(255, 0, 0));
 			Imgproc.fillPoly(rawImage, targets, new Scalar(0, 255, 0));
 	        
-			//Buffer the output
-//			frame.render(contouredImage);
-			rawFrame.render(rawImage);
-			
-			// calculate the time it took to render the frame
-            elapsedTime = System.currentTimeMillis() - frameStart;
-            // sync the framerate
-            try {
-                // make sure framerate milliseconds have passed this frame
-                if (elapsedTime < framerate) {
-                    Thread.sleep(framerate - elapsedTime);
-                }
-                else {
-                    // don't starve the garbage collector
-                    Thread.sleep(5);
-                }
-            }
-            catch (InterruptedException e) {
-                break;
-            }
-            ++frameCount;
-            totalElapsedTime += (System.currentTimeMillis() - frameStart);
-            if (totalElapsedTime > 1000) {
-                long reportedFramerate = (long) ((double) frameCount / (double) totalElapsedTime * 1000.0);
-                // show the framerate in the applet status window
-                System.out.println("fps: " + reportedFramerate);
-                // repaint();
-                frameCount = 0;
-                totalElapsedTime = 0;
-            }
+			//Send output to MJPG server
+			server.sendFrame(toBufferedImage(rawImage));
 		}
-		camera.release();
 	}
 	
+	public static BufferedImage toBufferedImage(Mat m){
+	        // Code from http://stackoverflow.com/questions/15670933/opencv-java-load-image-to-gui
+	
+	        // Check if image is grayscale or color
+	    int type = BufferedImage.TYPE_BYTE_GRAY;
+	    if ( m.channels() > 1 ) {
+	        type = BufferedImage.TYPE_3BYTE_BGR;
+	    }
+	
+	        // Transfer bytes from Mat to BufferedImage
+	    int bufferSize = m.channels()*m.cols()*m.rows();
+	    byte [] b = new byte[bufferSize];
+	    m.get(0,0,b); // get all the pixels
+	    BufferedImage image = new BufferedImage(m.cols(), m.rows(), type);
+	    final byte[] targetPixels = ((DataBufferByte) image.getRaster().getDataBuffer()).getData();
+	    System.arraycopy(b, 0, targetPixels, 0, b.length);
+	    return image;
+	}
 
 }
