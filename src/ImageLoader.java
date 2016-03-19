@@ -3,14 +3,17 @@ import java.awt.image.DataBufferByte;
 import java.util.ArrayList;
 
 import org.opencv.core.Core;
+import org.opencv.core.CvType;
 import org.opencv.core.Mat;
 import org.opencv.core.MatOfInt;
 import org.opencv.core.MatOfPoint;
+import org.opencv.core.MatOfPoint2f;
 import org.opencv.core.Point;
 import org.opencv.core.Scalar;
 import org.opencv.core.Size;
 import org.opencv.imgproc.Imgproc;
 import org.opencv.videoio.VideoCapture;
+import org.opencv.videoio.Videoio;
 
 import edu.wpi.first.wpilibj.networktables.NetworkTable;
 import edu.wpi.first.wpilibj.tables.ITable;
@@ -73,10 +76,20 @@ public class ImageLoader {
 		//Start MJPG server
 		MjpgServer server = new MjpgServer();
 		
+		int frameWidth = (int) camera.get(Videoio.CAP_PROP_FRAME_WIDTH);
+		int frameHeight = (int) camera.get(Videoio.CAP_PROP_FRAME_HEIGHT);
+		
 		//Processing loop
-		while(true) {			
+		while(true) {		
+			try {
+				Thread.sleep(10);
+			} catch (InterruptedException e) {
+				// TODO Auto-generated catch block
+				e.printStackTrace();
+			}
 			//Grab frame from camera
 			Mat rawImage = new Mat();
+//			rawImage = imread("/Users/griffen/Documents/Development/RealFullField/7.jpg");
 			if(!camera.read(rawImage)) {
 				System.out.println("Failed to read image");
 				continue;
@@ -141,9 +154,31 @@ public class ImageLoader {
 
 			// Draw output
 //			Mat contouredImage = new Mat(rawImage.size(), rawImage.type());
-			Imgproc.drawContours(rawImage, contourMOP, -1, new Scalar(0, 0, 255));
-			Imgproc.drawContours(rawImage, hullsMOP, -1, new Scalar(255, 0, 0));
 			Imgproc.fillPoly(rawImage, targets, new Scalar(0, 255, 0));
+			Imgproc.drawContours(rawImage, contourMOP, -1, new Scalar(0, 0, 255), 2);
+			Imgproc.drawContours(rawImage, hullsMOP, -1, new Scalar(255, 0, 0), 2);
+			
+			int targetCount = 0;
+			
+			for(MatOfPoint mop : targets) {
+				MatOfPoint2f curve = new MatOfPoint2f();
+				MatOfPoint2f approxCurve = new MatOfPoint2f();
+				mop.convertTo(curve, CvType.CV_32FC2);
+				Imgproc.approxPolyDP(curve, approxCurve, Imgproc.arcLength(curve, true) * 0.01, true);
+				approxCurve.convertTo(mop, CvType.CV_32S);
+				if(mop.rows() == 8) {
+					targetCount++;
+					int centerX = 0;
+					for(int i = 0; i < mop.rows(); i++) {
+						centerX += mop.get(i, 0)[0];
+					}
+					centerX /= mop.rows();
+					int pixelOffset = Math.abs(centerX - (frameWidth / 2));
+					Imgproc.arrowedLine(rawImage, new Point(frameWidth / 2, frameHeight / 2), new Point(centerX, frameHeight / 2), new Scalar(0, 0, 255), 10, 8, 0, 20.0 / pixelOffset);
+//					Imgproc.line(rawImage, new Point(centerX - 50, centerY), new Point(centerX + 50, centerY), new Scalar(0, 0, 255), 2);
+				}
+			}
+			smartDashboard.putNumber("TargetCount", targetCount);
 	        
 			//Send output to MJPG server
 			server.sendFrame(toBufferedImage(rawImage));

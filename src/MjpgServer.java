@@ -39,7 +39,7 @@ public class MjpgServer extends Thread {
 	                "boundary=" + "myboundary" + "\r\n" +
 	                "\r\n" +
 	                "--" + "myboundary" + "\r\n").getBytes());	
-			while (!socket.isClosed()) {
+			while(true) {
 				if(frame != null) {
 					ByteArrayOutputStream buffer = new ByteArrayOutputStream();
 					ImageIO.write(frame, "JPEG", buffer);
